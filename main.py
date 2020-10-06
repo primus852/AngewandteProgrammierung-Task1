@@ -47,6 +47,10 @@ headings = ['age',
             'income'
             ]
 
+cols_to_drop = [
+    'fnlwgt'
+]
+
 
 # Utility function to report best scores
 def report(results, n_top=3):
@@ -123,17 +127,20 @@ if __name__ == "__main__":
     parser.add_argument('--threshold', type=float, default=0.5,
                         help='Threshold for the probability predict')
 
+    parser.add_argument('--group', type=bool, default=False,
+                        help='Put in predefined groups')
+
     args = parser.parse_args()
     if args.missing != 'drop' and args.missing != 'replace' and args.missing != 'ignore':
         print('Please select either drop, replace or ignore for --missing')
         exit()
 
     # Import the Dataframe
-    df_raw = pd.read_csv('data/adult.data', delimiter=', ', names=headings, converters={"header": float})
+    df_raw = pd.read_csv('data/adult.data', delimiter=';', names=headings, converters={"header": float})
     print(df_raw.head())
 
     # Final Weight serves no purpose? DROP IT
-    df = df_raw.drop(["fnlwgt"], axis=1)
+    df = df_raw.drop(cols_to_drop, axis=1)
 
     # Define the target
     Y = df['income']
@@ -157,11 +164,23 @@ if __name__ == "__main__":
     # Encode the DF #
     df_orig = df.copy()
 
+    # Group the continous data
+    if args.group is True:
+        # Age
+        age_bins = [0, 25, 40, 60, 80, 110]
+        age_labels = ['0-25', '26-40', '41-60', '61-80', '81-110']
+        df_orig['age'] = pd.cut(df_orig['age'], bins=age_bins, labels=age_labels, right=False)
+
+        # Hours per Week
+        hpw_bins = [0, 20, 40, 60, 100]
+        hpw_labels = ['0-20', '21-40', '41-60', '61-100']
+        df_orig['hours-per-week'] = pd.cut(df_orig['hours-per-week'], bins=age_bins, labels=age_labels, right=False)
+
     # Get the unique values per column
     cols_with_missing = []
     print('\n------UNIQUE VALUES PER FEATURE------')
     for head in headings:
-        if head != 'fnlwgt':
+        if head not in cols_to_drop:
             unique = check_unique(df[head])
             print('Column: %s, Values: %s' % (head, unique))
 
@@ -193,7 +212,7 @@ if __name__ == "__main__":
 
     unique_counts = []
     for head in headings:
-        if head != 'fnlwgt':
+        if head not in cols_to_drop:
             # Add count of features
             occurrences = df[head].value_counts(dropna=False)
             unique_counts.append(occurrences)
@@ -228,11 +247,23 @@ if __name__ == "__main__":
 
     plt.close()
 
-    df_box = encode(df.copy())
+    # Show the Heatmap
+    # It shows, that education-num is not equal to education
+    df_encoded = encode(df.copy())
+    fig, ax = plt.subplots(figsize=(20, 15))  # Sample figsize in inches
+    ax = sns.heatmap(df_encoded.corr(), annot=True, linewidths=.5, ax=ax, fmt='.1g', vmin=-1, vmax=1, center= 0, cmap= 'coolwarm')
+    if args.plots == 'display' or args.plots == 'both':
+        plt.show()
+
+    if args.plots == 'save' or args.plots == 'both':
+        plt.savefig('./plots/heatmap.png')
+
+    df_box = encode(df_orig.copy())
 
     # Boxplot for params
+    # ONLY AGE MAKES SENSE
     for head in headings:
-        if head != 'income' and head != 'fnlwgt':
+        if head not in cols_to_drop:
             ax = sns.boxplot(x="income", y=head, data=df_box, palette='Set1')
 
             if args.plots == 'display' or args.plots == 'both':
@@ -252,16 +283,16 @@ if __name__ == "__main__":
 
     # List of Classifiers we go through
     classifiers = {
-        #"GradientBoosting": GradientBoostingClassifier(),
-        #"kNN": KNeighborsClassifier(),
-        #"kNN_opt": KNeighborsClassifier(n_neighbors=45, weights='distance', algorithm='brute', p=1),
-        #"SVM": SVC(gamma='auto', probability=True),
-        #"DecisionTree": DecisionTreeClassifier(max_leaf_nodes=8),
-        "XGBoost": XGBClassifier(),
-        #"RandomForest": RandomForestClassifier(n_estimators=10),
-        #"RandomForest_opt": RandomForestClassifier(n_estimators=100, bootstrap=True, criterion='entropy', max_depth=11, max_features=10, min_samples_split=10),
-        #"NeuralNet": MLPClassifier(alpha=1),
-        #"NaiveBayes": GaussianNB(),
+        # "GradientBoosting": GradientBoostingClassifier(),
+        # "kNN": KNeighborsClassifier(),
+        # "kNN_opt": KNeighborsClassifier(n_neighbors=45, weights='distance', algorithm='brute', p=1),
+        # "SVM": SVC(gamma='auto', probability=True),
+        "DecisionTree": DecisionTreeClassifier(max_leaf_nodes=8),
+        # "XGBoost": XGBClassifier(),
+        # "RandomForest": RandomForestClassifier(n_estimators=10),
+        # "RandomForest_opt": RandomForestClassifier(n_estimators=100, bootstrap=True, criterion='entropy', max_depth=11, max_features=10, min_samples_split=10),
+        # "NeuralNet": MLPClassifier(alpha=1),
+        # "NaiveBayes": GaussianNB(),
     }
 
     # RandomCV RandomForest
@@ -326,7 +357,7 @@ if __name__ == "__main__":
         # Get Total Time
         clf_time = end_timer - start_timer
 
-        if name != 'kNN':
+        if name != 'NeuralNet' and name != 'NaiveBayes' and name != 'kNN' and name != 'kNN_opt':
             # get importance
             importance = clf.feature_importances_
             # summarize feature importance
@@ -403,7 +434,8 @@ if __name__ == "__main__":
                 first_time = current_threshold
 
         t_data = {'Threshold Value': current_t_val, 'FN (>50K als <=50K klassifiziert)': false_negatives}
-        sns_plot = sns.lineplot(x='Threshold Value', y='FN (>50K als <=50K klassifiziert)', data=pd.DataFrame(t_data), label='Max. %s: <%.3f' % (name, float(first_time)), palette='Set1')
+        sns_plot = sns.lineplot(x='Threshold Value', y='FN (>50K als <=50K klassifiziert)', data=pd.DataFrame(t_data),
+                                label='Max. %s: <%.3f' % (name, float(first_time)), palette='Set1')
         sns_fig = sns_plot.get_figure()
 
         if args.plots == 'save' or args.plots == 'both':
